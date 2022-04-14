@@ -5,6 +5,7 @@ It will like and/or retweet tweets that contain single or multiple keywords and 
 
 # Built-in/Generic Imports
 import os
+import re
 import logging
 from time import sleep
 
@@ -14,48 +15,37 @@ import tweepy
 # Own modules
 from config import *
 
-__author__ = 'Annie Wu'
-__version__ = '1.0.0'
-__maintainer__ = 'Annie Wu'
-__email__ = 'anniewu2303@gmail.com'
-__status__ = 'Dev'
-
-
 logging.basicConfig(format='%(levelname)s [%(asctime)s] %(message)s', datefmt='%m/%d/%Y %r', level=logging.INFO)
 logger = logging.getLogger()
 
 def initialize_api():
-    api = create_api()
-    return api
+    api, my_info = create_api()
+    return api, my_info
+    
+def get_user_account(tweet):
+    twitter_usernames = re.findall(r'(?<=^|(?<=[^a-zA-Z0-9-\.]))@([A-Za-z0-9_]+)', tweet)
+    
+    if twitter_usernames:
+        return twitter_usernames
 
 def get_tweets(api):
     # Exclude retweets from search to avoid repeats
-    if run_continuously:
-        tweets = tweepy.Cursor(api.search,
-                        q=search_keywords + " -filter:retweets", 
+    
+    tweets = api.search_tweets(q=search_keywords + " -filter:retweets",
                         count=100,
                         result_type=result_type,
-                        monitor_rate_limit=True, 
-                        wait_on_rate_limit=True,
-                        lang="en").items()
-    else:
-        tweets = tweepy.Cursor(api.search,
-                        q=search_keywords + " -filter:retweets",
-                        count=100,
-                        result_type=result_type,
-                        monitor_rate_limit=True, 
-                        wait_on_rate_limit=True,
-                        lang="en").items(number_of_tweets)
+                        lang="ja")
+    print(len(tweets))
     return tweets
-
-def process_tweets(api, tweets):
+    
+def process_tweets(api, tweets, my_info):
     for tweet in tweets:
-        tweet = api.get_status(tweet.id)
+        # tweet = api.get_status(tweet.id)
         logger.info(f"Processing tweet: {tweet.text}")
-
+        
         # Ignore tweet if it is from myself or if it is a reply to a tweet
-        if tweet.user.id != api.me().id or tweet.in_reply_to_status_id is not None:
-
+        if tweet.user.id != my_info.id or tweet.in_reply_to_status_id is not None:
+            
             if retweet_tweets:
                 if not tweet.retweeted:
                     try:
@@ -63,7 +53,7 @@ def process_tweets(api, tweets):
                         logger.info("Retweeted now")
                     except Exception as e:
                         logger.error("Error on retweet", exc_info=True)
-                        raise e
+                        continue
                 else:
                     logger.info("Has been retweeted previously")
 
@@ -74,15 +64,30 @@ def process_tweets(api, tweets):
                         logger.info("Favorited now")
                     except Exception as e:
                         logger.error("Error on favorite", exc_info=True)
-                        raise e
+                        continue
                 else:
                     logger.info("Has been favorited previously")
+            
+            if follow_user:
+                usernames = get_user_account(tweet.text)
+                print("usernames: ", usernames)
+                try:
+                    for username in usernames:
+                        user = api.get_user(screen_name=username)
+                        if user.id != my_info.id:
+                            api.create_friendship(screen_name = username)
+                            logger.info(f"Followed user: {user.screen_name}")
+                    # api.create_friendship(user_id = tweet.user.id)
+                    # logger.info("Followed user")
+                except Exception as e:
+                    logger.error("Error on follow", exc_info=True)
+                    continue
 
         # Delay in between processing tweets
         sleep(delay)
 
 
 if __name__ == "__main__":
-    api = initialize_api()
+    api, my_info = initialize_api()
     tweets = get_tweets(api)
-    process_tweets(api, tweets)
+    process_tweets(api, tweets, my_info)
